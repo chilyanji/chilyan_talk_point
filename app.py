@@ -1,10 +1,11 @@
-from flask import Flask, render_template, request, redirect, session, url_for
+from flask import Flask, render_template, request, redirect, session, url_for, jsonify
 from werkzeug.security import generate_password_hash, check_password_hash
 import sqlite3
 import os
+from datetime import datetime
 
 app = Flask(__name__, static_url_path='/static', static_folder='static')
-app.secret_key = 'supersecretkey'  # change this in production
+app.secret_key = 'supersecretkey'
 
 # DB INIT
 def init_db():
@@ -16,6 +17,13 @@ def init_db():
             email TEXT UNIQUE,
             password TEXT,
             profile_pic TEXT DEFAULT 'default.png'
+        )''')
+        c.execute('''CREATE TABLE IF NOT EXISTS messages (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            user_id INTEGER,
+            message TEXT,
+            timestamp TEXT,
+            FOREIGN KEY (user_id) REFERENCES users(id)
         )''')
         conn.commit()
 
@@ -44,8 +52,8 @@ def register():
 @app.route('/login', methods=['GET', 'POST'])
 def login():
     if request.method == 'POST':
-        email = request.form['email']
-        password = request.form['password']
+        email = request.form.get('email')
+        password = request.form.get('password')
 
         with sqlite3.connect('users.db') as conn:
             c = conn.cursor()
@@ -90,6 +98,34 @@ def dashboard():
     if 'user_id' not in session:
         return redirect('/login')
     return render_template('dashboard.html', name=session['user_name'], profile_pic=session['profile_pic'])
+
+@app.route('/chat')
+def chat():
+    if 'user_id' not in session:
+        return redirect('/login')
+    return render_template('chat.html', name=session['user_name'])
+
+@app.route('/send_message', methods=['POST'])
+def send_message():
+    if 'user_id' not in session:
+        return 'Unauthorized', 401
+    message = request.form['message']
+    timestamp = datetime.now().strftime('%Y-%m-%d %H:%M:%S')
+    with sqlite3.connect('users.db') as conn:
+        c = conn.cursor()
+        c.execute("INSERT INTO messages (user_id, message, timestamp) VALUES (?, ?, ?)",
+                  (session['user_id'], message, timestamp))
+        conn.commit()
+    return 'OK'
+
+@app.route('/get_messages')
+def get_messages():
+    with sqlite3.connect('users.db') as conn:
+        c = conn.cursor()
+        c.execute("SELECT users.name, messages.message, messages.timestamp FROM messages JOIN users ON users.id = messages.user_id ORDER BY messages.id DESC LIMIT 20")
+        messages = c.fetchall()
+    messages.reverse()
+    return jsonify(messages)
 
 @app.route('/logout')
 def logout():
