@@ -1,21 +1,23 @@
-from flask import Flask, render_template, request, redirect, session, url_for, jsonify, send_file
+from flask import Flask, render_template, request, redirect, session, send_file, jsonify, url_for
+from flask_socketio import SocketIO, emit, send
 from werkzeug.security import generate_password_hash, check_password_hash
 from werkzeug.utils import secure_filename
 from itsdangerous import URLSafeTimedSerializer
-from flask_socketio import SocketIO, send
-import sqlite3, os
-from datetime import datetime
-from reportlab.lib.pagesizes import letter
+import os
+import sqlite3
+from io import BytesIO
 from reportlab.pdfgen import canvas
+from reportlab.lib.pagesizes import letter
+from datetime import datetime
 
+# === App config ===
 app = Flask(__name__, static_url_path='/static', static_folder='static')
 app.secret_key = 'supersecretkey'
-socketio = SocketIO(app, cors_allowed_origins="*")  # Fix for SocketIO deployment issue
+socketio = SocketIO(app, cors_allowed_origins="*")
+serializer = URLSafeTimedSerializer(app.secret_key)
 
 UPLOAD_FOLDER = 'static/uploads'
 app.config['UPLOAD_FOLDER'] = UPLOAD_FOLDER
-
-serializer = URLSafeTimedSerializer(app.secret_key)
 
 # ================== DB INIT =====================
 def init_db():
@@ -38,22 +40,26 @@ def init_db():
         conn.commit()
 
 # ================== ROUTES =====================
-
-@app.route('/')
+@app.route("/")
 def index():
     return redirect('/login')
 
 @app.route('/register', methods=['GET', 'POST'])
 def register():
     if request.method == 'POST':
-        name = request.form['name']
-        email = request.form['email']
-        password = request.form['password']
-        confirm = request.form['confirm_password']
+        name = request.form.get('name')
+        email = request.form.get('email')
+        password = request.form.get('password')
+        confirm = request.form.get('confirm_password')
+
+        if not name or not email or not password or not confirm:
+            return "All fields are required!"
+
         if password != confirm:
             return "Passwords do not match!"
 
         hashed = generate_password_hash(password)
+
         with sqlite3.connect('users.db') as conn:
             c = conn.cursor()
             try:
@@ -61,8 +67,10 @@ def register():
                           (name, email, hashed))
                 conn.commit()
                 return redirect('/login')
-            except:
+            except sqlite3.IntegrityError:
                 return "User already exists!"
+            except Exception as e:
+                return f"Error: {str(e)}"
     return render_template('register.html')
 
 @app.route('/login', methods=['GET', 'POST'])
@@ -197,4 +205,4 @@ def handle_message(msg):
 if __name__ == '__main__':
     os.makedirs('static/uploads', exist_ok=True)
     init_db()
-    socketio.run(app, debug=True, port=10000)
+    socketio.run(app, debug=True, port=10000, allow_unsafe_werkzeug=True)
