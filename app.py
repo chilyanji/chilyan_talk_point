@@ -1,13 +1,23 @@
-from flask import Flask, render_template, request, redirect, session, url_for, jsonify
+from flask import Flask, render_template, request, redirect, session, url_for, jsonify, send_file
 from werkzeug.security import generate_password_hash, check_password_hash
-import sqlite3
-import os
+from werkzeug.utils import secure_filename
+from itsdangerous import URLSafeTimedSerializer
+from flask_socketio import SocketIO, send
+import sqlite3, os
 from datetime import datetime
+from reportlab.lib.pagesizes import letter
+from reportlab.pdfgen import canvas
 
 app = Flask(__name__, static_url_path='/static', static_folder='static')
 app.secret_key = 'supersecretkey'
+socketio = SocketIO(app)
 
-# DB INIT
+UPLOAD_FOLDER = 'static/uploads'
+app.config['UPLOAD_FOLDER'] = UPLOAD_FOLDER
+
+serializer = URLSafeTimedSerializer(app.secret_key)
+
+# ================== DB INIT =====================
 def init_db():
     with sqlite3.connect('users.db') as conn:
         c = conn.cursor()
@@ -27,6 +37,8 @@ def init_db():
         )''')
         conn.commit()
 
+# ================== ROUTES =====================
+
 @app.route('/')
 def index():
     return redirect('/login')
@@ -36,13 +48,17 @@ def register():
     if request.method == 'POST':
         name = request.form['name']
         email = request.form['email']
-        password = generate_password_hash(request.form['password'])
+        password = request.form['password']
+        confirm = request.form['confirm_password']
+        if password != confirm:
+            return "Passwords do not match!"
 
+        hashed = generate_password_hash(password)
         with sqlite3.connect('users.db') as conn:
             c = conn.cursor()
             try:
                 c.execute("INSERT INTO users (name, email, password) VALUES (?, ?, ?)", 
-                          (name, email, password))
+                          (name, email, hashed))
                 conn.commit()
                 return redirect('/login')
             except:
@@ -54,7 +70,6 @@ def login():
     if request.method == 'POST':
         email = request.form.get('email')
         password = request.form.get('password')
-
         with sqlite3.connect('users.db') as conn:
             c = conn.cursor()
             c.execute("SELECT * FROM users WHERE email=?", (email,))
@@ -68,36 +83,55 @@ def login():
                 return "Invalid credentials!"
     return render_template('login.html')
 
-@app.route('/forgot', methods=['GET', 'POST'])
-def forgot_password():
-    if request.method == 'POST':
-        email = request.form['email']
-        with sqlite3.connect('users.db') as conn:
-            c = conn.cursor()
-            c.execute("SELECT * FROM users WHERE email=?", (email,))
-            user = c.fetchone()
-            if user:
-                return redirect(url_for('reset_password', email=email))
-            else:
-                return "Email not found!"
-    return render_template('forgot_password.html')
-
-@app.route('/reset/<email>', methods=['GET', 'POST'])
-def reset_password(email):
-    if request.method == 'POST':
-        new_pass = generate_password_hash(request.form['password'])
-        with sqlite3.connect('users.db') as conn:
-            c = conn.cursor()
-            c.execute("UPDATE users SET password=? WHERE email=?", (new_pass, email))
-            conn.commit()
-            return redirect('/login')
-    return render_template('reset_password.html', email=email)
-
 @app.route('/dashboard')
 def dashboard():
     if 'user_id' not in session:
         return redirect('/login')
     return render_template('dashboard.html', name=session['user_name'], profile_pic=session['profile_pic'])
+
+@app.route('/upload', methods=['POST'])
+def upload():
+    if 'user_id' not in session:
+        return redirect('/login')
+    file = request.files['profile']
+    if file:
+        filename = secure_filename(file.filename)
+        path = os.path.join(app.config['UPLOAD_FOLDER'], filename)
+        file.save(path)
+        with sqlite3.connect('users.db') as conn:
+            c = conn.cursor()
+            c.execute("UPDATE users SET profile_pic=? WHERE id=?", (filename, session['user_id']))
+            conn.commit()
+        session['profile_pic'] = filename
+    return redirect('/dashboard')
+
+@app.route('/forgot', methods=['GET', 'POST'])
+def forgot_password():
+    if request.method == 'POST':
+        email = request.form['email']
+        token = serializer.dumps(email, salt='reset')
+        reset_link = url_for('reset_password', token=token, _external=True)
+        return f"<p>Reset link: <a href='{reset_link}'>{reset_link}</a></p>"
+    return render_template('forgot_password.html')
+
+@app.route('/reset/<token>', methods=['GET', 'POST'])
+def reset_password(token):
+    try:
+        email = serializer.loads(token, salt='reset', max_age=3600)
+    except:
+        return "Invalid or expired link!"
+    if request.method == 'POST':
+        new = request.form['new_password']
+        confirm = request.form['confirm_password']
+        if new != confirm:
+            return "Passwords do not match"
+        hashed = generate_password_hash(new)
+        with sqlite3.connect('users.db') as conn:
+            c = conn.cursor()
+            c.execute("UPDATE users SET password=? WHERE email=?", (hashed, email))
+            conn.commit()
+        return redirect('/login')
+    return render_template('reset_password.html', email=email)
 
 @app.route('/chat')
 def chat():
@@ -127,11 +161,41 @@ def get_messages():
     messages.reverse()
     return jsonify(messages)
 
+@app.route('/export_chat')
+def export_chat():
+    if 'user_id' not in session:
+        return redirect('/login')
+    filename = f'chat_{session["user_id"]}.pdf'
+    filepath = os.path.join('static', filename)
+    c = canvas.Canvas(filepath, pagesize=letter)
+    with sqlite3.connect('users.db') as conn:
+        cur = conn.cursor()
+        cur.execute("SELECT users.name, messages.message, messages.timestamp FROM messages JOIN users ON users.id = messages.user_id ORDER BY messages.id")
+        messages = cur.fetchall()
+    y = 750
+    for name, msg, time in messages:
+        c.drawString(50, y, f"[{time}] {name}: {msg}")
+        y -= 20
+        if y < 50:
+            c.showPage()
+            y = 750
+    c.save()
+    return send_file(filepath, as_attachment=True)
+
 @app.route('/logout')
 def logout():
     session.clear()
     return redirect('/login')
 
+# Real-time message broadcasting
+@socketio.on('message')
+def handle_message(msg):
+    print('Message:', msg)
+    send(msg, broadcast=True)
+
+# Run
 if __name__ == '__main__':
+    if not os.path.exists('static/uploads'):
+        os.makedirs('static/uploads')
     init_db()
-    app.run(debug=True)
+    socketio.run(app, debug=True)

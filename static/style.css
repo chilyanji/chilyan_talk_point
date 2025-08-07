@@ -1,32 +1,71 @@
 body {
   font-family: Arial, sans-serif;
-  background: #f4f4f4;
+  background: #f0f2f5;
   margin: 0;
   padding: 0;
 }
-.chat-container {
-  max-width: 600px;
-  margin: 50px auto;
+
+.container, .chat-container {
+  max-width: 400px;
+  margin: 80px auto;
   background: white;
-  padding: 20px;
-  box-shadow: 0 0 10px gray;
-  border-radius: 8px;
+  padding: 30px;
+  border-radius: 10px;
+  box-shadow: 0 0 15px rgba(0,0,0,0.1);
 }
-#messages {
-  border: 1px solid #ccc;
-  height: 300px;
-  overflow-y: scroll;
-  padding: 10px;
-  margin-bottom: 10px;
+
+h2 {
+  text-align: center;
+  margin-bottom: 20px;
+  color: #333;
 }
-#chat-form {
+
+form {
   display: flex;
+  flex-direction: column;
 }
-#chat-form input {
-  flex: 1;
+
+input[type="text"],
+input[type="email"],
+input[type="password"],
+input[type="file"] {
   padding: 10px;
-  font-size: 16px;
+  margin-bottom: 15px;
+  border: 1px solid #ccc;
+  border-radius: 5px;
 }
-#chat-form button {
-  padding: 10px 20px;
+
+button {
+  padding: 10px;
+  background: #007bff;
+  color: white;
+  border: none;
+  border-radius: 5px;
+  cursor: pointer;
+}
+
+button:hover {
+  background: #0056b3;
+}
+
+a {
+  display: block;
+  margin-top: 10px;
+  text-align: center;
+  color: #007bff;
+  text-decoration: none;
+}
+
+a:hover {
+  text-decoration: underline;
+}
+
+#messages {
+  height: 300px;
+  overflow-y: auto;
+  background: #f7f7f7;
+  padding: 10px;
+  border-radius: 5px;
+  margin-bottom: 15px;
+  border: 1px solid #ccc;
 }
