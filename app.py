@@ -10,7 +10,7 @@ from reportlab.pdfgen import canvas
 
 app = Flask(__name__, static_url_path='/static', static_folder='static')
 app.secret_key = 'supersecretkey'
-socketio = SocketIO(app)
+socketio = SocketIO(app, cors_allowed_origins="*")  # Fix for SocketIO deployment issue
 
 UPLOAD_FOLDER = 'static/uploads'
 app.config['UPLOAD_FOLDER'] = UPLOAD_FOLDER
@@ -93,8 +93,8 @@ def dashboard():
 def upload():
     if 'user_id' not in session:
         return redirect('/login')
-    file = request.files['profile']
-    if file:
+    file = request.files.get('profile')
+    if file and file.filename != '':
         filename = secure_filename(file.filename)
         path = os.path.join(app.config['UPLOAD_FOLDER'], filename)
         file.save(path)
@@ -187,15 +187,14 @@ def logout():
     session.clear()
     return redirect('/login')
 
-# Real-time message broadcasting
+# Real-time chat
 @socketio.on('message')
 def handle_message(msg):
     print('Message:', msg)
     send(msg, broadcast=True)
 
-# Run
+# ========= Run =========
 if __name__ == '__main__':
-    if not os.path.exists('static/uploads'):
-        os.makedirs('static/uploads')
+    os.makedirs('static/uploads', exist_ok=True)
     init_db()
-    socketio.run(app, debug=True)
+    socketio.run(app, debug=True, port=10000)
